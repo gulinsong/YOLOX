@@ -77,6 +77,7 @@ class MosaicDetection(Dataset):
 
     @Dataset.mosaic_getitem
     def __getitem__(self, idx):
+        print('mosaic: ', idx)
         if self.enable_mosaic and random.random() < self.mosaic_prob:
             mosaic_labels = []
             input_dim = self._dataset.input_dim

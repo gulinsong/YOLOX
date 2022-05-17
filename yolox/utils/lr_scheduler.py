@@ -25,9 +25,10 @@ class LRScheduler:
         self.iters_per_epoch = iters_per_epoch
         self.total_epochs = total_epochs
         self.total_iters = iters_per_epoch * total_epochs
-
+        
         self.__dict__.update(kwargs)
-
+        
+        self.milestones = [3,6,9,12,15]
         self.lr_func = self._get_lr_func(name)
 
     def update_lr(self, iters):

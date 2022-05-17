@@ -24,7 +24,8 @@ class YoloBatchSampler(torchBatchSampler):
 
     def __iter__(self):
         for batch in super().__iter__():
-            yield [(self.mosaic, idx) for idx in batch]
+            #yield [(self.mosaic, idx) for idx in batch]
+            yield [idx for idx in batch]
 
 
 class InfiniteSampler(Sampler):

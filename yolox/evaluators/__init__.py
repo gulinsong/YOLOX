@@ -4,3 +4,5 @@
 
 from .coco_evaluator import COCOEvaluator
 from .voc_evaluator import VOCEvaluator
+from .coco_evaluator_saliency import COCOWithSaliencyEvaluator
+from .saliency_evaluator import *

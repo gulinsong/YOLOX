@@ -15,7 +15,7 @@ from .losses import IOUloss
 from .network_blocks import BaseConv, DWConv
 
 
-class YOLOXHead(nn.Module):
+class YOLOXSaliencyHead(nn.Module):
     def __init__(
         self,
         num_classes,
@@ -36,99 +36,63 @@ class YOLOXHead(nn.Module):
         self.num_classes = num_classes
         self.decode_in_inference = True  # for deploy, set to False
 
-        self.cls_convs = nn.ModuleList()
-        self.reg_convs = nn.ModuleList()
-        self.cls_preds = nn.ModuleList()
-        self.reg_preds = nn.ModuleList()
-        self.obj_preds = nn.ModuleList()
-        self.stems = nn.ModuleList()
+        self.saliency_convs = nn.ModuleList()
+        self.saliency_preds = nn.ModuleList()
         Conv = DWConv if depthwise else BaseConv
 
-        for i in range(len(in_channels)):
-            self.stems.append(
-                BaseConv(
-                    in_channels=int(in_channels[i] * width),
-                    out_channels=int(256 * width),
-                    ksize=1,
-                    stride=1,
-                    act=act,
-                )
-            )
-            self.cls_convs.append(
-                nn.Sequential(
-                    *[
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                    ]
-                )
-            )
-            self.reg_convs.append(
-                nn.Sequential(
-                    *[
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                        Conv(
-                            in_channels=int(256 * width),
-                            out_channels=int(256 * width),
-                            ksize=3,
-                            stride=1,
-                            act=act,
-                        ),
-                    ]
-                )
-            )
-            self.cls_preds.append(
-                nn.Conv2d(
-                    in_channels=int(256 * width),
-                    out_channels=self.n_anchors * self.num_classes,
-                    kernel_size=1,
-                    stride=1,
-                    padding=0,
-                )
-            )
-            self.reg_preds.append(
-                nn.Conv2d(
-                    in_channels=int(256 * width),
-                    out_channels=4,
-                    kernel_size=1,
-                    stride=1,
-                    padding=0,
-                )
-            )
-            self.obj_preds.append(
-                nn.Conv2d(
-                    in_channels=int(256 * width),
-                    out_channels=self.n_anchors * 1,
-                    kernel_size=1,
-                    stride=1,
-                    padding=0,
-                )
-            )
 
+        self.saliency_convs.append(
+            nn.Sequential(
+                *[
+                    Conv(in_channels=int(in_channels[2] * width), out_channels=int(in_channels[1] * width), ksize=3, stride=1, act=act,),
+                    Conv(in_channels=int(in_channels[1] * width), out_channels=int(in_channels[1] * width), ksize=3, stride=1, act=act,),
+                    nn.Upsample(scale_factor=2),
+                ]
+            )
+        )
+        self.saliency_convs.append(
+            nn.Sequential(
+                *[
+                    Conv(in_channels=int(in_channels[1] * width * 2), out_channels=int(in_channels[0] * width), ksize=3, stride=1, act=act,),
+                    Conv(in_channels=int(in_channels[0] * width), out_channels=int(in_channels[0] * width), ksize=3, stride=1, act=act,),
+                    nn.Upsample(scale_factor=2),
+                ]
+            )
+        )
+        self.saliency_convs.append(
+            nn.Sequential(
+                *[
+                    Conv(in_channels=int(in_channels[0] * width * 2), out_channels=int(256 * width), ksize=3, stride=1, act=act,),
+                    Conv(in_channels=int(256 * width), out_channels=int(256 * width), ksize=3, stride=1, act=act,),
+                    nn.Upsample(scale_factor=2),
+                    Conv(in_channels=int(256 * width), out_channels=int(256 * width), ksize=3, stride=1, act=act,),
+                    Conv(in_channels=int(256 * width), out_channels=int(256 * width), ksize=3, stride=1, act=act,),
+                    nn.Upsample(scale_factor=2),
+                    Conv(in_channels=int(256 * width), out_channels=int(256 * width), ksize=3, stride=1, act=act,),
+                    Conv(in_channels=int(256 * width), out_channels=int(256 * width), ksize=3, stride=1, act=act,),
+                    nn.Upsample(scale_factor=2),
+                ]
+            )
+        )
+        self.saliency_preds.append(
+            nn.Conv2d(
+                in_channels=int(256 * width),
+                out_channels=1,
+                kernel_size=1,
+                stride=1,
+                padding=0,
+            )
+        )    
+        #self.saliency_final = nn.Sigmoid()
         self.use_l1 = False
-        self.l1_loss = nn.L1Loss(reduction="none")
-        self.bcewithlog_loss = nn.BCEWithLogitsLoss(reduction="none")
+        self.l1_loss = nn.L1Loss()
+        self.becloss = nn.BCELoss()
+        self.bcewithlog_loss = nn.BCEWithLogitsLoss()
         self.iou_loss = IOUloss(reduction="none")
         self.strides = strides
         self.grids = [torch.zeros(1)] * len(in_channels)
 
+    '''
     def initialize_biases(self, prior_prob):
         for conv in self.cls_preds:
             b = conv.bias.view(self.n_anchors, -1)
@@ -139,7 +103,7 @@ class YOLOXHead(nn.Module):
             b = conv.bias.view(self.n_anchors, -1)
             b.data.fill_(-math.log((1 - prior_prob) / prior_prob))
             conv.bias = torch.nn.Parameter(b.view(-1), requires_grad=True)
-
+    '''
     def forward(self, xin, labels=None, imgs=None):
         outputs = []
         origin_preds = []
@@ -147,91 +111,36 @@ class YOLOXHead(nn.Module):
         y_shifts = []
         expanded_strides = []
         
-        for k, (cls_conv, reg_conv, stride_this_level, x) in enumerate(
-            zip(self.cls_convs, self.reg_convs, self.strides, xin)
-        ):
-            x = self.stems[k](x)
-            cls_x = x
-            reg_x = x
+        #/32
+        #print(xin[0].shape, xin[1].shape, xin[2].shape, 'hehehehehehehehehehehehehehe')
+        saliency_pafpn1_upsample_feat = self.saliency_convs[0](xin[2])
+        
+        saliency_pafpn2_concat_feat = torch.cat([saliency_pafpn1_upsample_feat, xin[1]], 1)
+        #/16
 
-            cls_feat = cls_conv(cls_x)
-            cls_output = self.cls_preds[k](cls_feat)
 
-            reg_feat = reg_conv(reg_x)
-            reg_output = self.reg_preds[k](reg_feat)
-            obj_output = self.obj_preds[k](reg_feat)
-            print("head shape: ", k ,cls_feat.shape, cls_output.shape, reg_feat.shape, reg_output.shape, obj_output.shape, x.shape)
-            if self.training:
-                output = torch.cat([reg_output, obj_output, cls_output], 1)
-                output, grid = self.get_output_and_grid(
-                    output, k, stride_this_level, xin[0].type()
-                )
-                x_shifts.append(grid[:, :, 0])
-                y_shifts.append(grid[:, :, 1])
-                expanded_strides.append(
-                    torch.zeros(1, grid.shape[1])
-                    .fill_(stride_this_level)
-                    .type_as(xin[0])
-                )
-                if self.use_l1:
-                    batch_size = reg_output.shape[0]
-                    hsize, wsize = reg_output.shape[-2:]
-                    reg_output = reg_output.view(
-                        batch_size, self.n_anchors, 4, hsize, wsize
-                    )
-                    reg_output = reg_output.permute(0, 1, 3, 4, 2).reshape(
-                        batch_size, -1, 4
-                    )
-                    origin_preds.append(reg_output.clone())
+        saliency_pafpn2_upsample_feat = self.saliency_convs[1](saliency_pafpn2_concat_feat)
 
-            else:
-                output = torch.cat(
-                    [reg_output, obj_output.sigmoid(), cls_output.sigmoid()], 1
-                )
+        #print(saliency_pafpn2_upsample_feat.shape, xin[0].shape, "hahahahahahahahahahahahahahah2")
+        saliency_pafpn3_concat_feat = torch.cat([saliency_pafpn2_upsample_feat, xin[0]], 1)
+        
 
-            outputs.append(output)
-
+        #print(saliency_pafpn3_concat_feat.shape, "hahahahahahahahahahahahahahah3")
+        #/8
+        saliency_pafpn3_upsample_feat = self.saliency_convs[2](saliency_pafpn3_concat_feat)
+        #print(saliency_pafpn3_upsample_feat.shape, "hahahahahahahahahaha4")
+        output_saliency_map = self.saliency_preds[0](saliency_pafpn3_upsample_feat)
+        #output_saliency_map = self.saliency_final(output_saliency_map)
+        #print(output_saliency_map.shape, "hahahahahahahahaha5")
         if self.training:
-            return self.get_losses(
+            return self.get_loss_for_saliency(
                 imgs,
-                x_shifts,
-                y_shifts,
-                expanded_strides,
                 labels,
-                torch.cat(outputs, 1),
-                origin_preds,
+                output_saliency_map,
                 dtype=xin[0].dtype,
             )
         else:
-            self.hw = [x.shape[-2:] for x in outputs]
-            # [batch, n_anchors_all, 85]
-            outputs = torch.cat(
-                [x.flatten(start_dim=2) for x in outputs], dim=2
-            ).permute(0, 2, 1)
-            if self.decode_in_inference:
-                return self.decode_outputs(outputs, dtype=xin[0].type())
-            else:
-                return outputs
-
-    def get_output_and_grid(self, output, k, stride, dtype):
-        grid = self.grids[k]
-
-        batch_size = output.shape[0]
-        n_ch = 5 + self.num_classes
-        hsize, wsize = output.shape[-2:]
-        if grid.shape[2:4] != output.shape[2:4]:
-            yv, xv = meshgrid([torch.arange(hsize), torch.arange(wsize)])
-            grid = torch.stack((xv, yv), 2).view(1, 1, hsize, wsize, 2).type(dtype)
-            self.grids[k] = grid
-
-        output = output.view(batch_size, self.n_anchors, n_ch, hsize, wsize)
-        output = output.permute(0, 1, 3, 4, 2).reshape(
-            batch_size, self.n_anchors * hsize * wsize, -1
-        )
-        grid = grid.view(1, -1, 2)
-        output[..., :2] = (output[..., :2] + grid) * stride
-        output[..., 2:4] = torch.exp(output[..., 2:4]) * stride
-        return output, grid
+            return output_saliency_map
 
     def decode_outputs(self, outputs, dtype):
         grids = []
@@ -249,6 +158,22 @@ class YOLOXHead(nn.Module):
         outputs[..., :2] = (outputs[..., :2] + grids) * strides
         outputs[..., 2:4] = torch.exp(outputs[..., 2:4]) * strides
         return outputs
+
+    def get_loss_for_saliency(
+        self,
+        imgs,
+        labels,
+        outputs,
+        dtype,
+    ):
+        #print("============================================output and target: ", outputs.shape, labels.shape)
+        #targets = labels.unsqueeze(1)
+        #loss = self.becloss(outputs, labels)
+        loss = self.bcewithlog_loss(outputs, labels)
+        #loss = self.l1_loss(outputs, labels)
+        return loss
+
+
 
     def get_losses(
         self,

@@ -242,7 +242,7 @@ class Trainer:
             )
             loss_meter = self.meter.get_filtered_meter("loss")
             loss_str = ", ".join(
-                ["{}: {:.1f}".format(k, v.latest) for k, v in loss_meter.items()]
+                ["{}: {:.5f}".format(k, v.latest) for k, v in loss_meter.items()]
             )
 
             time_meter = self.meter.get_filtered_meter("time")
@@ -309,6 +309,7 @@ class Trainer:
                 ckpt_file = self.args.ckpt
                 ckpt = torch.load(ckpt_file, map_location=self.device)["model"]
                 model = load_ckpt(model, ckpt)
+                print('load done==================================================')
             self.start_epoch = 0
 
         return model
